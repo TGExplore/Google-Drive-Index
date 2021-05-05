@@ -15,10 +15,19 @@ const authConfig = {
     "refresh_token": "", // Authorize token
     "service_account": false, // true if you're using Service Account instead of user account
     "service_account_json": randomserviceaccount, // appropriate values for SA, more in ReadMe file
-    "files_list_page_size": 50,
-    "search_result_list_page_size": 50,
-    "enable_cors_file_down": false,
-    "enable_password_file_verify": false,
+    /**
+     * Set up multiple Drives to display; add multiples by format
+     * [id]: It can be the team disk id, subfolder id, or "root" (representing the root directory of personal disk);
+     * [name]: Display name
+     * [auth]: Basic Auth's username & Basic Auth Password in dict/json format.
+     * [protect_file_link]: Basic Auth Whether it is used to protect the file link, the default value (when not set) is false, that is, the file link is not protected (convenient for straight-chain download / external playback, etc.)
+     * Basic Auth for each disk can be set individually. Basic Auth protects all folders / subfolders in the disk by default
+     * [Note] The file link is not protected by default, which can facilitate straight-chain download / external playback;
+     * If you want to protect the file link, you need to set protect_file_link to true. At this time, if you want to perform external playback and other operations, you need to replace host with user: pass @ host
+     * No Basic Auth disk is required, just keep user and pass empty at the same time. (No need to set it directly)
+     * [Note] For the disk whose id is set to the subfolder id, the search function will not be supported (it does not affect other disks).
+     */
+ 
     "roots":[
       {
           "id": "",
@@ -26,13 +35,50 @@ const authConfig = {
           "protect_file_link": false,
          // "auth": {"username":"password"} // Remove double slash before "auth" to activate id password protection
       },
+ 
+/** Below code can be copied multiple times to add multiple drives.
+    User can add multiple username and password using json. Example - {"user1":"pass1", "user2":"pass2"}.
+ 
       {
-          "id": "root",
+          "id": "",
           "name": "Drive Two",
-          "protect_file_link": false,
-         // "auth": {"username":"password"} // Remove double slash before "auth" to activate id password protection
+          "protect_file_link": false, 
+         // "auth": { "user1":"pass1", "user2":"pass2", }  // remove double slash at starting of this line to use password.
       },
-    ]};
+ 
+*/
+ 
+            ],
+
+
+    /**
+     * The number displayed on each page of the file list page. [Recommended setting value is between 100 and 1000];
+     * If the setting is greater than 1000, it will cause an error when requesting drive api;
+     * If the set value is too small, it will cause the incremental loading (page loading) of the scroll bar of the file list page to fail;
+     * Another effect of this value is that if the number of files in the directory is greater than this setting value (that is, multiple pages need to be displayed), the results of the first listing directory will be cached.
+     */
+    "files_list_page_size": 50,
+    /**
+     * The number displayed on each page of the search results page. [Recommended setting value is between 50 and 1000];
+     * If the setting is greater than 1000, it will cause an error when requesting drive api;
+     * If the set value is too small, it will cause the incremental loading (page loading) of the scroll bar of the search results page to fail;
+     * The size of this value affects the response speed of the search operation.
+     */
+    "search_result_list_page_size": 50,
+    // Confirm that cors can be opened
+    "enable_cors_file_down": false,
+    /**
+     * The basic auth above already contains the function of global protection in the disk. So by default, the password in the .password file is no longer authenticated;
+     * If you still need to verify the password in the .password file for certain directories based on global authentication, set this option to true;
+     * [Note] If the password verification of the .password file is turned on, each time the directory is listed, the overhead of querying the directory for the existence of the .password file is additionally added.
+     */
+    "enable_password_file_verify": false
+    };
+
+
+/**
+ * web ui config
+ */
 const uiConfig = {
     "theme": "dark", // switch between themes, default set to dark, select from https://github.com/ParveenBhadooOfficial/Google-Drive-Index#themes
     "version": "2.0.17-alpha.3", // don't touch this one. get latest code using generator at https://generator.driveindex.ga
@@ -64,7 +110,13 @@ const uiConfig = {
     "arc_code": "jfoY2h19" // arc.io Integraion Code, get yours from https://portal.arc.io
 };
 
+/**
+ * global functions
+ */
 const FUNCS = {
+    /**
+     * Transform into relatively safe search keywords for Google search morphology
+     */
     formatSearchKeyword: function(keyword) {
         let nothing = "";
         let space = " ";
@@ -76,6 +128,10 @@ const FUNCS = {
 
 };
 
+/**
+ * global consts
+ * @type {{folder_mime_type: string, default_file_fields: string, gd_root_type: {share_drive: number, user_drive: number, sub_folder: number}}}
+ */
 const CONSTS = new(class {
     default_file_fields = 'parents,id,name,mimeType,modifiedTime,createdTime,fileExtension,size';
     gd_root_type = {
@@ -86,6 +142,9 @@ const CONSTS = new(class {
     folder_mime_type = 'application/vnd.google-apps.folder';
 })();
 
+/**
+ * Functions that are required to generate the JWT token required for service account authentication
+ */
 const JWT = {
   header: {
     alg: 'RS256',
@@ -143,6 +202,8 @@ const JWT = {
     }
   }
 };
+
+// gd instances
 var gds = [];
 
 function html(current_drive_order = 0, model = {}) {
@@ -191,6 +252,10 @@ addEventListener('fetch', event => {
     event.respondWith(handleRequest(event.request));
 });
 
+/**
+ * Fetch and log a request
+ * @param {Request} request
+ */
 async function handleRequest(request) {
     if (gds.length === 0) {
         for (let i = 0; i < authConfig.roots.length; i++) {
@@ -198,6 +263,7 @@ async function handleRequest(request) {
             await gd.init();
             gds.push(gd)
         }
+        // This operation is parallel and improves efficiency
         let tasks = [];
         gds.forEach(gd => {
             tasks.push(gd.initRootType());
@@ -207,10 +273,16 @@ async function handleRequest(request) {
         }
     }
 
+    // From path extract from drive order
+    // And get the corresponding gd instance according to drive order
     let gd;
     let url = new URL(request.url);
     let path = url.pathname;
 
+    /**
+     * Redirect to start page
+     * @returns {Response}
+     */
     function redirectToIndexPage() {
         return new Response('', {
             status: 301,
@@ -231,6 +303,7 @@ async function handleRequest(request) {
         return Response.redirect("https://generator.driveindex.ga", 301)
     }
 
+    // Special command format
     const command_reg = /^\/(?<num>\d+):(?<command>[a-zA-Z0-9]+)(\/.*)?$/g;
     const match = command_reg.exec(path);
     if (match) {
@@ -241,13 +314,17 @@ async function handleRequest(request) {
         } else {
             return redirectToIndexPage()
         }
+        // basic auth
         for (const r = gd.basicAuthResponse(request); r;) return r;
         const command = match.groups.command;
+        // search for
         if (command === 'search') {
             if (request.method === 'POST') {
+                // search results
                 return handleSearch(request, gd);
             } else {
                 const params = url.searchParams;
+                // Search page
                 return new Response(html(gd.order, {
                     q: params.get("q") || '',
                     is_search_page: true,
@@ -264,6 +341,7 @@ async function handleRequest(request) {
         }
     }
 
+    // Desired path format
     const common_reg = /^\/\d+:\/.*$/g;
     try {
         if (!path.match(common_reg)) {
@@ -280,6 +358,8 @@ async function handleRequest(request) {
         return redirectToIndexPage()
     }
 
+    // basic auth
+    // for (const r = gd.basicAuthResponse(request); r;) return r;
     const basic_auth_res = gd.basicAuthResponse(request);
 
     path = path.replace(gd.url_path_prefix, '') || '/';
@@ -327,8 +407,10 @@ async function apiRequest(request, gd) {
 
     if (path.substr(-1) == '/') {
         let form = await request.formData();
+        // This can increase the speed when listing directories for the first time. The disadvantage is that if the password verification fails, the overhead of listing directories will still be incurred
         let deferred_list_result = gd.list(path, form.get('page_token'), Number(form.get('page_index')));
 
+        // check .password file, if `enable_password_file_verify` is true
         if (authConfig['enable_password_file_verify']) {
             let password = await gd.password(path);
             // console.log("dir password", password);
@@ -347,6 +429,7 @@ async function apiRequest(request, gd) {
     }
 }
 
+// deal with search
 async function handleSearch(request, gd) {
     const option = {
         status: 200,
@@ -360,6 +443,12 @@ async function handleSearch(request, gd) {
     return new Response(JSON.stringify(search_result), option);
 }
 
+/**
+ * deal with id2path
+ * @param request Id parameter required
+ * @param gd
+ * @returns {Promise<Response>} [Note] If the item represented by the id received from the front desk is not under the target gd disk, then the response will be returned to the front desk with an empty string ""
+ */
 async function handleId2Path(request, gd) {
     const option = {
         status: 200,
@@ -374,20 +463,44 @@ async function handleId2Path(request, gd) {
 
 class googleDrive {
     constructor(authConfig, order) {
+        // Each disk corresponds to an order, corresponding to a gd instance
         this.order = order;
         this.root = authConfig.roots[order];
         this.root.protect_file_link = this.root.protect_file_link || false;
         this.url_path_prefix = `/${order}:`;
         this.authConfig = authConfig;
+        // TODO: The invalid refresh strategy of these caches can be formulated later
+        // path id
         this.paths = [];
+        // path file
         this.files = [];
+        // path pass
         this.passwords = [];
+        // id <-> path
         this.id_path_cache = {};
         this.id_path_cache[this.root['id']] = '/';
         this.paths["/"] = this.root['id'];
+        /*if (this.root['pass'] != "") {
+          this.passwords['/'] = this.root['pass'];
+        }*/
+        // this.init();
     }
+
+    /**
+     * Initial authorization; then obtain user_drive_real_root_id
+     * @returns {Promise<void>}
+     */
     async init() {
         await this.accessToken();
+        /*await (async () => {
+            // Get only 1 time
+            if (authConfig.user_drive_real_root_id) return;
+            const root_obj = await (gds[0] || this).findItemById('root');
+            if (root_obj && root_obj.id) {
+                authConfig.user_drive_real_root_id = root_obj.id
+            }
+        })();*/
+        // Wait for user_drive_real_root_id , and only get it once
         if (authConfig.user_drive_real_root_id) return;
         const root_obj = await (gds[0] || this).findItemById('root');
         if (root_obj && root_obj.id) {
@@ -395,6 +508,10 @@ class googleDrive {
         }
     }
 
+    /**
+     * Get the root directory type, set to root_type
+     * @returns {Promise<void>}
+     */
     async initRootType() {
         const root_id = this.root['id'];
         const types = CONSTS.gd_root_type;
@@ -406,6 +523,11 @@ class googleDrive {
         }
     }
 
+    /**
+     * Returns a response that requires authorization, or null
+     * @param request
+     * @returns {Response|null}
+     */
     basicAuthResponse(request) {
         const auth = this.root.auth || '',
           _401 = new Response(unauthorized, {
@@ -481,6 +603,7 @@ class googleDrive {
         return obj.files[0];
     }
 
+    // Cache through reqeust cache
     async list(path, page_token = null, page_index = 0) {
         if (this.path_children_cache == undefined) {
             // { <path> :[ {nextPageToken:'',data:{}}, {nextPageToken:'',data:{}} ...], ...}
@@ -502,6 +625,7 @@ class googleDrive {
         let id = await this.findPathId(path);
         let result = await this._ls(id, page_token, page_index);
         let data = result.data;
+        // Cache multiple pages
         if (result.nextPageToken && data.files) {
             if (!Array.isArray(this.path_children_cache[path])) {
                 this.path_children_cache[path] = []
@@ -517,6 +641,7 @@ class googleDrive {
 
 
     async _ls(parent, page_token = null, page_index = 0) {
+        // console.log("_ls", parent);
 
         if (parent == undefined) {
             return null;
@@ -527,7 +652,7 @@ class googleDrive {
             'supportsAllDrives': true
         };
         params.q = `'${parent}' in parents and trashed = false AND name !='.password'`;
-        params.orderBy = 'folder,modifiedTime desc,name';
+        params.orderBy = 'folder,name,modifiedTime desc';
         params.fields = "nextPageToken, files(id, name, mimeType, size , modifiedTime)";
         params.pageSize = this.authConfig.files_list_page_size;
 
@@ -545,12 +670,28 @@ class googleDrive {
             curPageIndex: page_index,
             data: obj
         };
+
+        /*do {
+            if (pageToken) {
+                params.pageToken = pageToken;
+            }
+            let url = 'https://www.googleapis.com/drive/v3/files';
+            url += '?' + this.enQuery(params);
+            let requestOption = await this.requestOption();
+            let response = await fetch(url, requestOption);
+            obj = await response.json();
+            files.push(...obj.files);
+            pageToken = obj.nextPageToken;
+        } while (pageToken);*/
+
     }
 
     async password(path) {
         if (this.passwords[path] !== undefined) {
             return this.passwords[path];
         }
+
+        // console.log("load", path, ".password", this.passwords[path]);
 
         let file = await this.file(path + '.password');
         if (file == undefined) {
@@ -565,6 +706,12 @@ class googleDrive {
         return this.passwords[path];
     }
 
+
+    /**
+     * Get share drive information by id
+     * @param any_id
+     * @returns {Promise<null|{id}|any>} Any abnormal conditions are returned null
+     */
     async getShareDriveObjById(any_id) {
         if (!any_id) return null;
         if ('string' !== typeof any_id) return null;
@@ -578,6 +725,11 @@ class googleDrive {
         return null
     }
 
+
+    /**
+     * search for
+     * @returns {Promise<{data: null, nextPageToken: null, curPageIndex: number}>}
+     */
     async search(origin_keyword, page_token = null, page_index = 0) {
         const types = CONSTS.gd_root_type;
         const is_user_drive = this.root_type === types.user_drive;
@@ -594,10 +746,13 @@ class googleDrive {
         }
         let keyword = FUNCS.formatSearchKeyword(origin_keyword);
         if (!keyword) {
+            // The keyword is empty, return
             return empty_result;
         }
         let words = keyword.split(/\s+/);
         let name_search_str = `name contains '${words.join("' AND name contains '")}'`;
+
+        // corpora is a personal drive for user and a team drive for drive. With driveId
         let params = {};
         if (is_user_drive) {
             params.corpora = 'user'
@@ -605,6 +760,7 @@ class googleDrive {
         if (is_share_drive) {
             params.corpora = 'drive';
             params.driveId = this.root.id;
+            // This parameter will only be effective until June 1, 2020. Afterwards shared drive items will be included in the results.
             params.includeItemsFromAllDrives = true;
             params.supportsAllDrives = true;
         }
@@ -614,10 +770,11 @@ class googleDrive {
         params.q = `trashed = false AND name !='.password' AND (${name_search_str})`;
         params.fields = "nextPageToken, files(id, name, mimeType, size , modifiedTime)";
         params.pageSize = this.authConfig.search_result_list_page_size;
-        params.orderBy = 'folder,modifiedTime desc,name';
+        params.orderBy = 'folder,name,modifiedTime desc';
 
         let url = 'https://www.googleapis.com/drive/v3/files';
         url += '?' + this.enQuery(params);
+        // console.log(params)
         let requestOption = await this.requestOption();
         let response = await fetch(url, requestOption);
         let res_obj = await response.json();
@@ -628,14 +785,29 @@ class googleDrive {
             data: res_obj
         };
     }
-    
+
+
+    /**
+     * Get the file object of the upper folder of this file or folder layer by layer. Note: It will be very slow! ! !
+     * Up to find the root directory (root id) of the current gd object
+     * Only consider a single upward chain.
+     * [Note] If the item represented by this id is not under the target gd disk, then this function will return null
+     *
+     * @param child_id
+     * @param contain_myself
+     * @returns {Promise<[]>}
+     */
     async findParentFilesRecursion(child_id, contain_myself = true) {
         const gd = this;
         const gd_root_id = gd.root.id;
         const user_drive_real_root_id = authConfig.user_drive_real_root_id;
         const is_user_drive = gd.root_type === CONSTS.gd_root_type.user_drive;
+
+        // End point query id from bottom to top
         const target_top_id = is_user_drive ? user_drive_real_root_id : gd_root_id;
         const fields = CONSTS.default_file_fields;
+
+        // [{},{},...]
         const parent_files = [];
         let meet_top = false;
 
@@ -643,8 +815,11 @@ class googleDrive {
             if (!file_obj) return;
             if (!file_obj.parents) return;
             if (file_obj.parents.length < 1) return;
+
+            // ['','',...]
             let p_ids = file_obj.parents;
             if (p_ids && p_ids.length > 0) {
+                // its first parent
                 const first_p_id = p_ids[0];
                 if (first_p_id === target_top_id) {
                     meet_top = true;
@@ -667,6 +842,11 @@ class googleDrive {
         return meet_top ? parent_files : null
     }
 
+    /**
+     * Get the path relative to the root directory of this disk
+     * @param child_id
+     * @returns {Promise<string>} [Note] If the item represented by this id is not in the target gd disk, then this method will return an empty string ""
+     */
     async findPathById(child_id) {
         if (this.id_path_cache[child_id]) {
             return this.id_path_cache[child_id];
@@ -691,9 +871,16 @@ class googleDrive {
             this.id_path_cache[obj.id] = obj.path;
             this.paths[obj.path] = obj.id
         });
+
+        /*const is_folder = p_files[0].mimeType === CONSTS.folder_mime_type;
+        let path = '/' + p_files.map(it => it.name).reverse().join('/');
+        if (is_folder) path += '/';*/
+
         return cache[0].path;
     }
 
+
+    // Get file item based on id
     async findItemById(id) {
         const is_user_drive = this.root_type === CONSTS.gd_root_type.user_drive;
         let url = `https://www.googleapis.com/drive/v3/files/${id}?fields=${CONSTS.default_file_fields}${is_user_drive ? '' : '&supportsAllDrives=true'}`;
@@ -720,11 +907,15 @@ class googleDrive {
                 break;
             }
         }
+        // console.log(this.paths);
         return this.paths[path];
     }
 
     async _findDirId(parent, name) {
         name = decodeURIComponent(name).replace(/\'/g, "\\'");
+
+        // console.log("_findDirId", parent, name);
+
         if (parent == undefined) {
             return null;
         }
